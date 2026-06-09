@@ -207,8 +207,25 @@ def processing_task():
         front_frame = shared_data['latest_front_frame']
     
     if front_frame is not None:
-        # write your processing here
-        pass
+        # Simple lane-following via grayscale thresholding and centroid tracking
+        gray = cv2.cvtColor(front_frame, cv2.COLOR_BGR2GRAY)
+        h, w = gray.shape
+        roi = gray[int(h * 0.6):, :]
+        _, thresh = cv2.threshold(roi, 150, 255, cv2.THRESH_BINARY)
+        
+        M = cv2.moments(thresh)
+        if M["m00"] > 0:
+            cx = int(M["m10"] / M["m00"])
+        else:
+            cx = w // 2
+            
+        error = cx - (w // 2)
+        steering_input = max(-1.0, min(1.0, 1.5 * (error / (w // 2))))
+        acceleration_input = max(0.1, 0.5 * (1.0 - abs(steering_input)) + 0.2)
+        
+        with data_lock:
+            shared_data['steering_input'] = steering_input
+            shared_data['acceleration_input'] = acceleration_input
 
 def send_controls_task():
     #This is where you send the control commands to the car using the control_conn
@@ -216,12 +233,9 @@ def send_controls_task():
     if control_conn is None:
         return
     
-    #these are the variables used to control the car
-    #steering_input: -1.0 to 1.0 (left to right)
-    #acceleration_input: -1.0 to 1.0 (reverse to forward)
-    #this example always accelerate forward
-    steering_input = 0.0
-    acceleration_input = 1.0
+    with data_lock:
+        steering_input = shared_data['steering_input']
+        acceleration_input = shared_data['acceleration_input']
 
     try:
         # Pack and send the control command
