@@ -201,32 +201,75 @@ def read_back_camera_task():
 def processing_task():
     #This is where you write your image processing code to decide how to control the car
     #You can use libraries like OpenCV to process the image
-    #There is no limtation to the complexity of the processing task, you can use any libraries you want
+    #There is no limitation to the complexity of the processing task, you can use any libraries you want
     #Remember to use the shared_data to get the latest frame
     with data_lock:
         front_frame = shared_data['latest_front_frame']
-    
-    if front_frame is not None:
-        # Simple lane-following via grayscale thresholding and centroid tracking
-        gray = cv2.cvtColor(front_frame, cv2.COLOR_BGR2GRAY)
-        h, w = gray.shape
-        roi = gray[int(h * 0.6):, :]
-        _, thresh = cv2.threshold(roi, 150, 255, cv2.THRESH_BINARY)
-        
-        M = cv2.moments(thresh)
-        if M["m00"] > 0:
-            cx = int(M["m10"] / M["m00"])
-        else:
-            cx = w // 2
-            
-        error = cx - (w // 2)
-        steering_input = max(-1.0, min(1.0, 1.5 * (error / (w // 2))))
-        acceleration_input = max(0.1, 0.5 * (1.0 - abs(steering_input)) + 0.2)
-        
-        with data_lock:
-            shared_data['steering_input'] = steering_input
-            shared_data['acceleration_input'] = acceleration_input
 
+    if front_frame is None:
+        return
+
+    gray = cv2.cvtColor(front_frame, cv2.COLOR_BGR2GRAY)
+    h, w = gray.shape
+    hsv = cv2.cvtColor(front_frame, cv2.COLOR_BGR2HSV)
+
+    # --- Lane following (original logic, kept as fallback) ---
+    # Use the bottom 40% of the frame as ROI to detect road lane markings
+    roi_lane = gray[int(h * 0.6):, :]
+    _, thresh = cv2.threshold(roi_lane, 150, 255, cv2.THRESH_BINARY)
+    M = cv2.moments(thresh)
+    cx = int(M["m10"] / M["m00"]) if M["m00"] > 0 else w // 2
+    error = cx - (w // 2)
+    lane_steering = max(-1.0, min(1.0, 1.5 * (error / (w // 2))))
+
+    # --- Token detection (only look in top 60% where tokens appear ahead) ---
+    roi_hsv = hsv[:int(h * 0.6), :]
+
+    # Green token: steer toward it (+10% speed reward)
+    green_mask = cv2.inRange(roi_hsv, np.array([40, 80, 80]), np.array([80, 255, 255]))
+    green_contours, _ = cv2.findContours(green_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    # Red token: steer away from it (-20% speed penalty)
+    # Red wraps around hue=0/180 in HSV so two masks are needed and merged
+    red_mask1 = cv2.inRange(roi_hsv, np.array([0, 120, 70]),  np.array([10, 255, 255]))
+    red_mask2 = cv2.inRange(roi_hsv, np.array([170, 120, 70]), np.array([180, 255, 255]))
+    red_mask = cv2.bitwise_or(red_mask1, red_mask2)
+    red_contours, _ = cv2.findContours(red_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    token_steering = None
+
+    # Check green first (priority: collect green for speed boost)
+    # Area threshold > 200 filters out small/distant blobs
+    if green_contours:
+        largest = max(green_contours, key=cv2.contourArea)
+        if cv2.contourArea(largest) > 200:
+            x, y, tw, th = cv2.boundingRect(largest)
+            token_cx = x + tw // 2
+            err = token_cx - (w // 2)
+            token_steering = max(-1.0, min(1.0, 1.2 * (err / (w // 2))))
+
+    # Override: avoid red if it is large enough (close/imminent threat)
+    # Area threshold > 300 means we only react when the red token is nearby
+    # Steer in the opposite direction of the red token center
+    if red_contours:
+        largest_red = max(red_contours, key=cv2.contourArea)
+        if cv2.contourArea(largest_red) > 300:
+            x, y, tw, th = cv2.boundingRect(largest_red)
+            red_cx = x + tw // 2
+            err = red_cx - (w // 2)
+            token_steering = max(-1.0, min(1.0, -1.2 * (err / (w // 2))))
+
+    # Use token steering if a token is detected, otherwise fall back to lane following
+    steering_input = token_steering if token_steering is not None else lane_steering
+
+    # Reduce acceleration when steering hard to maintain stability
+    # Minimum acceleration bumped to 0.2 so the car doesn't near-stop on tight steers
+    acceleration_input = max(0.2, 0.5 * (1.0 - abs(steering_input)) + 0.2)
+
+    with data_lock:
+        shared_data['steering_input'] = steering_input
+        shared_data['acceleration_input'] = acceleration_input
+        
 def send_controls_task():
     #This is where you send the control commands to the car using the control_conn
     global control_conn
