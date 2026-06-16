@@ -236,6 +236,11 @@ def processing_task():
     red_mask = cv2.bitwise_or(red_mask1, red_mask2)
     red_contours, _ = cv2.findContours(red_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
+    # --- DEVELOPER: TIVENESH SRINIVASAN (A22EC0114) | Team: PDD RTSE ---
+    # Yellow token detection: steer away from it (high chance of corruption)
+    yellow_mask = cv2.inRange(roi_hsv, np.array([15, 100, 100]), np.array([35, 255, 255]))
+    yellow_contours, _ = cv2.findContours(yellow_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
     token_steering = None
 
     # Check green first (priority: collect green for speed boost)
@@ -259,6 +264,17 @@ def processing_task():
             err = red_cx - (w // 2)
             token_steering = max(-1.0, min(1.0, -1.2 * (err / (w // 2))))
 
+    # --- DEVELOPER: TIVENESH SRINIVASAN (A22EC0114) | Team: PDD RTSE ---
+    # Override: avoid yellow if it is large enough (danger of dynamic corruption)
+    # Area threshold > 300 means we only react when the yellow token is nearby
+    if yellow_contours:
+        largest_yellow = max(yellow_contours, key=cv2.contourArea)
+        if cv2.contourArea(largest_yellow) > 300:
+            x, y, tw, th = cv2.boundingRect(largest_yellow)
+            yellow_cx = x + tw // 2
+            err = yellow_cx - (w // 2)
+            token_steering = max(-1.0, min(1.0, -1.2 * (err / (w // 2))))
+
     # Use token steering if a token is detected, otherwise fall back to lane following
     steering_input = token_steering if token_steering is not None else lane_steering
 
@@ -269,7 +285,7 @@ def processing_task():
     with data_lock:
         shared_data['steering_input'] = steering_input
         shared_data['acceleration_input'] = acceleration_input
-        
+
 def send_controls_task():
     #This is where you send the control commands to the car using the control_conn
     global control_conn
