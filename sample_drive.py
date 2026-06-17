@@ -105,11 +105,13 @@ def setup_cameras():
                 s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 s.settimeout(1.0)
                 s.connect((CAMERA_HOST, FRONT_CAMERA_PORT))
+            except Exception:
+                print(f"  Front camera connection failed (attempt {front_attempt}), retrying...")
+                s.close()
+            else:
                 front_camera_sock = s
                 print("Connected to Front Camera successfully.")
                 front_connected = True
-            except Exception:
-                print(f"  Front camera connection failed (attempt {front_attempt}), retrying...")
                 
         if not back_connected:
             back_attempt += 1
@@ -117,11 +119,13 @@ def setup_cameras():
                 s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 s.settimeout(1.0)
                 s.connect((CAMERA_HOST, BACK_CAMERA_PORT))
+            except Exception:
+                print(f"  Back camera connection failed (attempt {back_attempt}), retrying...")
+                s.close()
+            else:
                 back_camera_sock = s
                 print("Connected to Back Camera successfully.")
                 back_connected = True
-            except Exception:
-                print(f"  Back camera connection failed (attempt {back_attempt}), retrying...")
                 
         if not (front_connected and back_connected):
             time.sleep(1)
@@ -135,14 +139,18 @@ def setup_control_server():
     server_sock.settimeout(1.0)
     print(f"Control server listening on {CONTROL_HOST}:{CONTROL_PORT}")
     
-    while is_running:
-        try:
-            conn, addr = server_sock.accept()
-            print(f"Control client connected from {addr}")
-            control_conn = conn
-            break
-        except socket.timeout:
-            continue
+    try:
+        while is_running:
+            try:
+                conn, addr = server_sock.accept()
+                print(f"Control client connected from {addr}")
+                control_conn = conn
+                break
+            except socket.timeout:
+                continue
+    finally:
+        server_sock.close()
+        print("Control server socket closed.")
 
 # ---------------------------------------------------------
 # Task Implementations (This is where you write your tasks)
@@ -204,7 +212,7 @@ def read_single_camera(sock, window_name, data_key):
                 cv2.waitKey(1)
                 
     except Exception as e:
-        pass
+        print(f"[{window_name}] Frame read error: {e}")
 
 def read_front_camera_task():
     read_single_camera(front_camera_sock, "Front Camera", 'latest_front_frame')
