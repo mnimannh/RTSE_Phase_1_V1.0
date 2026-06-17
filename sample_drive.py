@@ -7,6 +7,8 @@ import time
 import keyboard
 import select
 import ctypes
+import os
+import platform
 
 # ---------------------------------------------------------
 # Configuration
@@ -53,15 +55,23 @@ class RTTask(threading.Thread):
     def run(self):
         print(f"[{self.name}] Started | Period: {self.period}s | Priority: {self.priority}")
         try:
-            handle = ctypes.windll.kernel32.GetCurrentThread()
-            if self.priority == TaskPriority.HIGH:
-                ctypes.windll.kernel32.SetThreadPriority(handle, 2)
-            elif self.priority == TaskPriority.MEDIUM:
-                ctypes.windll.kernel32.SetThreadPriority(handle, 0)
-            elif self.priority == TaskPriority.LOW:
-                ctypes.windll.kernel32.SetThreadPriority(handle, -2)
+            if platform.system() == "Windows":
+                handle = ctypes.windll.kernel32.GetCurrentThread()
+                if self.priority == TaskPriority.HIGH:
+                    ctypes.windll.kernel32.SetThreadPriority(handle, 2)
+                elif self.priority == TaskPriority.MEDIUM:
+                    ctypes.windll.kernel32.SetThreadPriority(handle, 0)
+                elif self.priority == TaskPriority.LOW:
+                    ctypes.windll.kernel32.SetThreadPriority(handle, -2)
+            else:
+                priority_map = {
+                    TaskPriority.HIGH: -10,
+                    TaskPriority.MEDIUM: 0,
+                    TaskPriority.LOW: 10,
+                }
+                os.nice(priority_map.get(self.priority, 0))
         except Exception as e:
-            pass
+            print(f"[{self.name}] Warning: Could not set thread priority: {e}")
 
         while is_running:
             start_time = time.time()
@@ -85,9 +95,12 @@ def setup_cameras():
     print("Connecting to Cameras...")
     front_connected = False
     back_connected = False
+    front_attempt = 0
+    back_attempt = 0
     
     while is_running and not (front_connected and back_connected):
         if not front_connected:
+            front_attempt += 1
             try:
                 s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 s.settimeout(1.0)
@@ -96,9 +109,10 @@ def setup_cameras():
                 print("Connected to Front Camera successfully.")
                 front_connected = True
             except Exception:
-                pass
+                print(f"  Front camera connection failed (attempt {front_attempt}), retrying...")
                 
         if not back_connected:
+            back_attempt += 1
             try:
                 s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 s.settimeout(1.0)
@@ -107,7 +121,7 @@ def setup_cameras():
                 print("Connected to Back Camera successfully.")
                 back_connected = True
             except Exception:
-                pass
+                print(f"  Back camera connection failed (attempt {back_attempt}), retrying...")
                 
         if not (front_connected and back_connected):
             time.sleep(1)
