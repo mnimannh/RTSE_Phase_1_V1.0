@@ -1,0 +1,8 @@
+# Caveman - AI agent caveman mode (https://github.com/JuliusBrussee/caveman)
+# Agent rule files - ignore to prevent pushing caveman config to remote
+AGENTS.md
+.clinerules/
+.cursor/rules/caveman.mdc
+.windsurf/rules/caveman.md
+.github/copilot-instructions.md
+.opencode/
