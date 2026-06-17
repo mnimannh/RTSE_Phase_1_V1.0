@@ -292,9 +292,14 @@ def processing_task():
     # Use token steering if a token is detected, otherwise fall back to lane following
     steering_input = token_steering if token_steering is not None else lane_steering
 
-    # Reduce acceleration when steering hard to maintain stability
-    # Minimum acceleration bumped to 0.2 so the car doesn't near-stop on tight steers
-    acceleration_input = max(0.2, 0.5 * (1.0 - abs(steering_input)) + 0.2)
+    # Failsafe logic handling complete line/target loss scenario
+    if token_steering is None and M["m00"] == 0:
+        acceleration_input = 0.1  # Immediate dynamic crawl strategy to retain physical alignment
+        steering_input = 0.0      # Lock wheels straight ahead until visual lock reacquired
+    else:
+        # Reduce acceleration when steering hard to maintain stability
+        # Minimum acceleration bumped to 0.2 so the car doesn't near-stop on tight steers
+        acceleration_input = max(0.2, 0.5 * (1.0 - abs(steering_input)) + 0.2)
 
     with data_lock:
         shared_data['steering_input'] = steering_input
@@ -335,10 +340,10 @@ if __name__ == '__main__':
     # Period refers to the period of execution of the task in seconds
     # Priority refers to the priority of the task, higher priority means higher priority
     # Concurrency refers to the number of instances of the task that can run at the same time
-    t_front_camera = RTTask("ReadFrontCamera", period=0.005, priority=TaskPriority.HIGH, execute_func=read_front_camera_task)
-    t_back_camera = RTTask("ReadBackCamera", period=0.005, priority=TaskPriority.HIGH, execute_func=read_back_camera_task)
-    t_processing = RTTask("Processing", period=0.005, priority=TaskPriority.MEDIUM, execute_func=processing_task)
-    t_controls = RTTask("SendControls", period=0.005, priority=TaskPriority.HIGH, execute_func=send_controls_task)
+    t_front_camera = RTTask("ReadFrontCamera", period=0.01, priority=TaskPriority.HIGH, execute_func=read_front_camera_task)
+    t_back_camera = RTTask("ReadBackCamera", period=0.01, priority=TaskPriority.HIGH, execute_func=read_back_camera_task)
+    t_processing = RTTask("Processing", period=0.03, priority=TaskPriority.MEDIUM, execute_func=processing_task)
+    t_controls = RTTask("SendControls", period=0.01, priority=TaskPriority.HIGH, execute_func=send_controls_task)
     
     # Start tasks to run concurrently
     t_front_camera.start()
@@ -369,3 +374,4 @@ if __name__ == '__main__':
         control_conn.close()
     cv2.destroyAllWindows()
     print("System terminated cleanly.")
+
